@@ -390,11 +390,23 @@ with tab_search:
 
             st.session_state.last_downloaded_files = downloaded_paths
 
-            # Batch ZIP download button if multiple files
-            if len(downloaded_paths) > 1:
+            # Direct Download to Laptop Buttons
+            if len(downloaded_paths) == 1:
+                fp = downloaded_paths[0]
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        st.download_button(
+                            label=f"💾 Download '{os.path.basename(fp)}' Directly to Laptop",
+                            data=f.read(),
+                            file_name=os.path.basename(fp),
+                            mime="audio/mpeg",
+                            type="primary",
+                            key="btn_dl_single_top"
+                        )
+            elif len(downloaded_paths) > 1:
                 zip_data = create_zip_archive(downloaded_paths)
                 st.download_button(
-                    label=f"📦 Download All {len(downloaded_paths)} Songs as a Single ZIP File",
+                    label=f"📦 Download All {len(downloaded_paths)} Songs as a Single ZIP File to Laptop",
                     data=zip_data,
                     file_name=f"{singer_name.strip() or 'songs'}_mp3s.zip",
                     mime="application/zip",

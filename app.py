@@ -111,40 +111,45 @@ with st.sidebar:
 
     embed_art = st.checkbox("Embed Album Art & Metadata", value=True, help="Embeds thumbnail and song tags into MP3")
 
-    # Cloud Cookie Bypass
+    # Resolve Cookies (Priority: Uploaded/Pasted > Secrets > Local File)
     cookie_file_path = None
+    secret_cookies = None
+    try:
+        secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
+    except Exception:
+        pass
+
+    # Initialize from Secrets or local file if present
+    if secret_cookies:
+        cpath = os.path.join(output_dir, "secrets_cookies.txt")
+        with open(cpath, "w", encoding="utf-8") as f:
+            f.write(secret_cookies.strip())
+        cookie_file_path = cpath
+    elif os.path.isfile("youtube_cookies.txt"):
+        cookie_file_path = os.path.abspath("youtube_cookies.txt")
+
+    # Cloud Cookie Bypass UI
     with st.expander("🍪 Cloud Cookie Bypass (Fix 403 Forbidden)", expanded=False):
-        st.markdown(
-            "YouTube blocks media streams on cloud datacenter IPs (AWS / Streamlit Cloud). "
-            "To fix this, upload or paste your browser's **cookies.txt**."
-        )
+        if cookie_file_path:
+            st.success("YouTube cookies loaded & active! ✅")
+        else:
+            st.caption("If YouTube limits cloud downloads with 403 Forbidden, upload or paste your clean cookies.txt below, or set it in Streamlit Secrets.")
+
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         pasted_cookie = st.text_area("Or Paste Cookies Text", height=90, placeholder="# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/...")
-        
-        secret_cookies = None
-        try:
-            secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
-        except Exception:
-            pass
 
         if uploaded_cookie is not None:
-            cpath = os.path.join(output_dir, "session_cookies.txt")
+            cpath = os.path.join(output_dir, "custom_session_cookies.txt")
             with open(cpath, "wb") as f:
                 f.write(uploaded_cookie.getvalue())
             cookie_file_path = cpath
-            st.success("Custom cookies file active ✅")
+            st.success("Uploaded cookies active ✅")
         elif pasted_cookie.strip():
-            cpath = os.path.join(output_dir, "session_cookies.txt")
+            cpath = os.path.join(output_dir, "custom_session_cookies.txt")
             with open(cpath, "w", encoding="utf-8") as f:
                 f.write(pasted_cookie.strip())
             cookie_file_path = cpath
             st.success("Pasted cookies active ✅")
-        elif secret_cookies:
-            cpath = os.path.join(output_dir, "session_cookies.txt")
-            with open(cpath, "w", encoding="utf-8") as f:
-                f.write(secret_cookies)
-            cookie_file_path = cpath
-            st.success("Secrets cookies active ✅")
 
     st.markdown("---")
     st.markdown("### 🖥️ Environment Status")
@@ -294,7 +299,7 @@ with tab_search:
                     "💡 **Why this happened:** Streamlit Cloud is hosted on Amazon Web Services (AWS). YouTube blocks media downloads from cloud IP addresses unless you provide cookies.\n\n"
                     "👉 **How to fix this:**\n"
                     "1. Open **'🍪 Cloud Cookie Bypass'** in the left sidebar.\n"
-                    "2. Paste or upload your `cookies.txt` (exported using the free Chrome extension *'Get cookies.txt LOCALLY'*).\n"
+                    "2. Paste or upload your `cookies.txt` (or add to Streamlit Cloud Secrets).\n"
                     "3. Or run the app on your local computer (`run.bat`), where home internet connections are **never** blocked by YouTube!"
                 )
 
@@ -408,7 +413,6 @@ with tab_library:
                 label=f"📦 Download Entire Library ({len(mp3_files)} Songs) as ZIP",
                 data=zip_all_data,
                 file_name="youtube_music_library.zip",
-                mime="application/zip",
             )
 
     with col_clean:

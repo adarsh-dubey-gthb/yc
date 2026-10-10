@@ -9,6 +9,7 @@ import os
 import sys
 import glob
 import io
+import time
 import zipfile
 import subprocess
 import shutil
@@ -88,6 +89,68 @@ def create_zip_archive(file_paths: list) -> bytes:
                 zf.write(fp, arcname=os.path.basename(fp))
     zip_buffer.seek(0)
     return zip_buffer.getvalue()
+
+
+def create_progress_hook(song_progress_bar, song_status_box):
+    """
+    Creates a real-time progress hook for yt-dlp to update Streamlit download timeline.
+    Displays percentage, downloaded MB/total MB, speed, and ETA.
+    """
+    last_update_time = [0.0]
+
+    def hook(d: dict):
+        now = time.time()
+        status = d.get('status')
+
+        if status == 'downloading':
+            # Throttle updates to at most 3-4 times per second to keep UI smooth and responsive
+            if now - last_update_time[0] < 0.25:
+                return
+            last_update_time[0] = now
+
+            downloaded = d.get('downloaded_bytes', 0)
+            total = d.get('total_bytes') or d.get('total_bytes_estimate')
+            frag_index = d.get('fragment_index')
+            frag_count = d.get('fragment_count')
+
+            percent_val = 0.0
+            msg_parts = []
+
+            if total and total > 0:
+                percent_val = min(max(downloaded / total, 0.0), 0.99)
+                dl_mb = downloaded / (1024 * 1024)
+                tot_mb = total / (1024 * 1024)
+                msg_parts.append(f"**{percent_val * 100:.1f}%** ({dl_mb:.1f} / {tot_mb:.1f} MB)")
+            elif frag_index and frag_count and frag_count > 0:
+                percent_val = min(max(frag_index / frag_count, 0.0), 0.99)
+                msg_parts.append(f"**{percent_val * 100:.1f}%** (Segment {frag_index}/{frag_count})")
+            elif downloaded > 0:
+                dl_mb = downloaded / (1024 * 1024)
+                msg_parts.append(f"**{dl_mb:.1f} MB** downloaded")
+                percent_val = 0.35
+
+            speed = d.get('speed') or d.get('_speed_str')
+            if isinstance(speed, (int, float)):
+                msg_parts.append(f"⚡ {speed / (1024 * 1024):.2f} MB/s")
+            elif speed:
+                msg_parts.append(f"⚡ {str(speed).strip()}")
+
+            eta = d.get('eta') or d.get('_eta_str')
+            if isinstance(eta, (int, float)):
+                m, s = divmod(int(eta), 60)
+                msg_parts.append(f"⏱️ ETA {m}m {s:02d}s" if m else f"⏱️ ETA {s}s")
+            elif eta:
+                msg_parts.append(f"⏱️ ETA {str(eta).strip()}")
+
+            song_progress_bar.progress(percent_val)
+            detail_text = " • ".join(msg_parts) if msg_parts else "Downloading..."
+            song_status_box.markdown(f"📥 **Downloading Audio Stream:** {detail_text}")
+
+        elif status == 'finished':
+            song_progress_bar.progress(1.0)
+            song_status_box.markdown("🎛️ **Download finished! Transcoding to 320 kbps MP3 with FFmpeg...**")
+
+    return hook
 
 # Session state initialization
 if "search_results" not in st.session_state:
@@ -277,18 +340,27 @@ with tab_search:
             progress_bar = st.progress(0)
             status_text = st.empty()
 
+            song_progress_bar = st.progress(0.0)
+            song_status_box = st.empty()
+
             downloaded_items = []
             downloaded_paths = []
             has_403_error = False
 
             for idx, song in enumerate(selected_to_dl):
-                status_text.info(f"Processing ({idx + 1}/{len(selected_to_dl)}): **{song['title']}**...")
+                status_text.info(f"Processing ({idx + 1}/{len(selected_to_dl)}): **{song['title']}**")
+                song_progress_bar.progress(0.0)
+                song_status_box.markdown("⏳ Connecting to YouTube stream...")
+
+                hook = create_progress_hook(song_progress_bar, song_status_box)
+
                 res = download_single_audio(
                     url=song['url'],
                     output_dir=output_dir,
                     quality=quality,
                     embed_thumbnail=embed_art,
                     cookie_file=cookie_file_path,
+                    progress_callback=hook,
                 )
                 if res['success'] and res.get('file_path'):
                     downloaded_items.append((song, res))
@@ -300,6 +372,9 @@ with tab_search:
                     st.error(f"Failed to process '{song['title']}': {err}")
 
                 progress_bar.progress((idx + 1) / len(selected_to_dl))
+
+            song_progress_bar.empty()
+            song_status_box.empty()
 
             if downloaded_items:
                 status_text.success(f"🎉 Successfully prepared {len(downloaded_items)} of {len(selected_to_dl)} songs!")
@@ -374,14 +449,22 @@ with tab_link:
 
             st.markdown("---")
             if st.button("⬇️ Download MP3", type="primary", key="btn_download_link"):
-                with st.spinner("Downloading and converting audio..."):
-                    res = download_single_audio(
-                        url=url_input.strip(),
-                        output_dir=output_dir,
-                        quality=quality,
-                        embed_thumbnail=embed_art,
-                        cookie_file=cookie_file_path,
-                    )
+                song_progress_bar = st.progress(0.0)
+                song_status_box = st.empty()
+                song_status_box.markdown("⏳ Connecting to YouTube stream...")
+
+                hook = create_progress_hook(song_progress_bar, song_status_box)
+
+                res = download_single_audio(
+                    url=url_input.strip(),
+                    output_dir=output_dir,
+                    quality=quality,
+                    embed_thumbnail=embed_art,
+                    cookie_file=cookie_file_path,
+                    progress_callback=hook,
+                )
+                song_progress_bar.empty()
+                song_status_box.empty()
                 if res['success']:
                     st.success(f"Ready: **{res['title']}**!")
                     file_path = res.get('file_path')

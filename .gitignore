@@ -19,6 +19,10 @@ downloads/
 *.part
 *.ytdl
 
+# Cookies (Never commit personal login cookies)
+*cookie*.txt
+*.cookies
+
 # Streamlit secrets & cache
 .streamlit/secrets.toml
 .system_generated/

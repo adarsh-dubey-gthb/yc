@@ -64,17 +64,34 @@ def format_views(views: Optional[int]) -> str:
     return str(views)
 
 
+def get_node_runtime_config() -> Dict[str, Any]:
+    """
+    Configures Node.js runtime and remote challenge solver for yt-dlp.
+    Allows yt-dlp to solve dynamic YouTube JavaScript challenges without reloading.
+    """
+    cfg: Dict[str, Any] = {
+        'remote_components': ['ejs:github'],
+    }
+    node_exe = shutil.which("node") or shutil.which("nodejs")
+    if node_exe:
+        cfg['js_runtimes'] = {'node': {'path': node_exe}}
+    else:
+        cfg['js_runtimes'] = {'node': {}}
+    return cfg
+
+
 def search_singer_songs(singer_name: str, count: int = 5, cookie_file: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Search YouTube for top songs by the given singer/artist name.
     """
     query = f"ytsearch{count}:{singer_name} songs"
-    search_opts = {
+    search_opts: Dict[str, Any] = {
         'extract_flat': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
+        **get_node_runtime_config(),
     }
     if cookie_file and os.path.isfile(cookie_file):
         search_opts['cookiefile'] = cookie_file
@@ -120,12 +137,13 @@ def search_singer_songs(singer_name: str, count: int = 5, cookie_file: Optional[
 
 def get_video_info(url: str, cookie_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Fetch metadata for a single YouTube URL without downloading."""
-    opts = {
+    opts: Dict[str, Any] = {
         'extract_flat': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
+        **get_node_runtime_config(),
     }
     if cookie_file and os.path.isfile(cookie_file):
         opts['cookiefile'] = cookie_file
@@ -168,7 +186,7 @@ def download_single_audio(
 ) -> Dict[str, Any]:
     """
     Downloads audio from a YouTube URL and converts it to MP3.
-    Includes automatic fallback strategies to bypass HTTP 403 Forbidden.
+    Includes multi-strategy fallback to bypass 'The page needs to be reloaded' and 403 Forbidden.
     """
     os.makedirs(output_dir, exist_ok=True)
     ffmpeg_exe = get_ffmpeg_path()
@@ -188,19 +206,23 @@ def download_single_audio(
     if embed_thumbnail:
         postprocessors.append({'key': 'EmbedThumbnail'})
 
-    # Try client configurations sequentially if 403 occurs
-    client_strategies = [
-        # Strategy 1: Default modern clients (uses visionos + android_sdkless on modern yt-dlp)
-        None,
-        # Strategy 2: Explicit visionos (bypasses SABR 403)
-        {'youtube': {'player_client': ['visionos']}},
-        # Strategy 3: Android client fallback
-        {'youtube': {'player_client': ['android', 'web']}},
+    node_cfg = get_node_runtime_config()
+
+    # Fallback strategies evaluated in order:
+    # 1. VisionOS client (no cookies or cookies): YouTube's cleanest stream, bypasses SABR 403 & reload challenges
+    # 2. VisionOS client strictly without cookies (handles cases where cookies are expired or session-locked)
+    # 3. Android + iOS mobile clients
+    # 4. Default web client with node challenge solver
+    strategies = [
+        {'extractor_args': {'youtube': {'player_client': ['visionos']}}, 'use_cookies': True},
+        {'extractor_args': {'youtube': {'player_client': ['visionos']}}, 'use_cookies': False},
+        {'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}, 'use_cookies': False},
+        {'extractor_args': None, 'use_cookies': False},
     ]
 
     last_error = ""
 
-    for strat_idx, client_cfg in enumerate(client_strategies):
+    for strat_idx, strat in enumerate(strategies):
         downloaded_files = []
 
         class FilenameCollectorPP(yt_dlp.postprocessor.PostProcessor):
@@ -225,18 +247,21 @@ def download_single_audio(
             'windowsfilenames': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            'retries': 3,
-            'fragment_retries': 3,
-            'http_chunk_size': 10485760,  # 10MB chunk size prevents timeout / 403 throttling
+            'retries': 2,
+            'fragment_retries': 2,
+            'http_chunk_size': 10485760,  # 10MB chunk size prevents throttling
+            **node_cfg,
         }
 
-        if client_cfg:
-            ydl_opts['extractor_args'] = client_cfg
+        if strat['extractor_args']:
+            ydl_opts['extractor_args'] = strat['extractor_args']
 
-        if cookie_file and os.path.isfile(cookie_file):
-            ydl_opts['cookiefile'] = cookie_file
-        elif os.path.isfile("cookies.txt"):
-            ydl_opts['cookiefile'] = "cookies.txt"
+        # Determine cookie usage for this attempt
+        if strat['use_cookies']:
+            if cookie_file and os.path.isfile(cookie_file):
+                ydl_opts['cookiefile'] = cookie_file
+            elif os.path.isfile("cookies.txt"):
+                ydl_opts['cookiefile'] = "cookies.txt"
 
         if ffmpeg_exe:
             ydl_opts['ffmpeg_location'] = ffmpeg_exe
@@ -266,17 +291,25 @@ def download_single_audio(
                 }
         except Exception as e:
             last_error = str(e)
-            # If error is 403 Forbidden, loop to try the next client strategy
-            if "403" in last_error or "Forbidden" in last_error:
-                time.sleep(1)
-                continue
-            else:
-                # Other non-403 error, stop immediately
+            # If the video is confirmed unavailable or deleted, stop retrying
+            if "This video is unavailable" in last_error or "Private video" in last_error or "has been removed" in last_error:
                 break
+            # For challenge, reload, expired cookie, or 403 errors, proceed to next strategy
+            time.sleep(0.5)
+            continue
+
+    # Clean up error message for display
+    user_friendly_error = last_error
+    if "This video is unavailable" in last_error:
+        user_friendly_error = "This video is unavailable or has been removed from YouTube."
+    elif "Private video" in last_error:
+        user_friendly_error = "This video is private."
+    elif "The page needs to be reloaded" in last_error:
+        user_friendly_error = "YouTube requested verification challenge. (Resolved automatically on retry)"
 
     return {
         'success': False,
         'title': 'Error',
-        'error': last_error,
+        'error': user_friendly_error,
         'url': url,
     }

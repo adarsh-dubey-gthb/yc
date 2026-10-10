@@ -11,6 +11,7 @@ import glob
 import io
 import zipfile
 import subprocess
+import shutil
 from datetime import datetime
 
 import streamlit as st
@@ -111,40 +112,45 @@ with st.sidebar:
 
     embed_art = st.checkbox("Embed Album Art & Metadata", value=True, help="Embeds thumbnail and song tags into MP3")
 
-    # Resolve Cookies (Priority: Uploaded/Pasted > Secrets > Local File)
-    cookie_file_path = None
-    secret_cookies = None
-    try:
-        secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
-    except Exception:
-        pass
+    # Cloud Cookie Bypass UI & Toggle
+    with st.expander("🍪 Cloud Cookie Bypass (Optional)", expanded=False):
+        use_cookies = st.checkbox(
+            "Use Account Cookies",
+            value=True,
+            help="Uncheck if your cookies expire or if you see challenge warnings. When unchecked, VisionOS engine is used."
+        )
 
-    # Initialize from Secrets or local file if present
-    if secret_cookies:
-        cpath = os.path.join(output_dir, "secrets_cookies.txt")
-        with open(cpath, "w", encoding="utf-8") as f:
-            f.write(secret_cookies.strip())
-        cookie_file_path = cpath
-    elif os.path.isfile("youtube_cookies.txt"):
-        cookie_file_path = os.path.abspath("youtube_cookies.txt")
+        cookie_file_path = None
+        if use_cookies:
+            secret_cookies = None
+            try:
+                secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
+            except Exception:
+                pass
 
-    # Cloud Cookie Bypass UI
-    with st.expander("🍪 Cloud Cookie Bypass (Fix 403 Forbidden)", expanded=False):
-        if cookie_file_path:
+            if secret_cookies:
+                cpath = os.path.join(output_dir, "secrets_cookies.txt")
+                with open(cpath, "w", encoding="utf-8") as f:
+                    f.write(secret_cookies.strip())
+                cookie_file_path = cpath
+            elif os.path.isfile("youtube_cookies.txt"):
+                cookie_file_path = os.path.abspath("youtube_cookies.txt")
+
+        if cookie_file_path and use_cookies:
             st.success("YouTube cookies loaded & active! ✅")
         else:
-            st.caption("If YouTube limits cloud downloads with 403 Forbidden, upload or paste your clean cookies.txt below, or set it in Streamlit Secrets.")
+            st.caption("Optional: If YouTube restricts downloads on cloud servers, upload your clean cookies.txt below or set it in Secrets.")
 
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         pasted_cookie = st.text_area("Or Paste Cookies Text", height=90, placeholder="# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/...")
 
-        if uploaded_cookie is not None:
+        if uploaded_cookie is not None and use_cookies:
             cpath = os.path.join(output_dir, "custom_session_cookies.txt")
             with open(cpath, "wb") as f:
                 f.write(uploaded_cookie.getvalue())
             cookie_file_path = cpath
             st.success("Uploaded cookies active ✅")
-        elif pasted_cookie.strip():
+        elif pasted_cookie.strip() and use_cookies:
             cpath = os.path.join(output_dir, "custom_session_cookies.txt")
             with open(cpath, "w", encoding="utf-8") as f:
                 f.write(pasted_cookie.strip())
@@ -158,6 +164,10 @@ with st.sidebar:
         st.success(f"**FFmpeg Active** ✅\n\n`{os.path.basename(ffmpeg_bin)}`")
     else:
         st.error("**FFmpeg Not Found!**")
+
+    node_bin = shutil.which("node") or shutil.which("nodejs")
+    if node_bin:
+        st.success(f"**Node.js Engine** ✅\n\n`{os.path.basename(node_bin)}`")
 
     # Local Desktop folder opener
     is_local_desktop = (sys.platform == "win32") or ("DISPLAY" in os.environ)

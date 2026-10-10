@@ -1,5 +1,6 @@
 streamlit>=1.35.0
 yt-dlp>=2026.08.19
+curl-cffi>=0.7.0
 imageio-ffmpeg>=0.5.1
 mutagen>=1.47.0
 requests>=2.31.0

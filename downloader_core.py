@@ -80,6 +80,18 @@ def get_node_runtime_config() -> Dict[str, Any]:
     return cfg
 
 
+def get_impersonate_config() -> Dict[str, Any]:
+    """
+    Configures browser TLS fingerprint impersonation using curl-cffi.
+    Bypasses datacenter 403 Forbidden blocks by impersonating Google Chrome.
+    """
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        return {'impersonate': ImpersonateTarget.from_str('chrome')}
+    except Exception:
+        return {}
+
+
 def search_singer_songs(singer_name: str, count: int = 5, cookie_file: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Search YouTube for top songs by the given singer/artist name.
@@ -92,6 +104,7 @@ def search_singer_songs(singer_name: str, count: int = 5, cookie_file: Optional[
         'geo_bypass': True,
         'nocheckcertificate': True,
         **get_node_runtime_config(),
+        **get_impersonate_config(),
     }
     if cookie_file and os.path.isfile(cookie_file):
         search_opts['cookiefile'] = cookie_file
@@ -144,6 +157,7 @@ def get_video_info(url: str, cookie_file: Optional[str] = None) -> Optional[Dict
         'geo_bypass': True,
         'nocheckcertificate': True,
         **get_node_runtime_config(),
+        **get_impersonate_config(),
     }
     if cookie_file and os.path.isfile(cookie_file):
         opts['cookiefile'] = cookie_file
@@ -252,6 +266,7 @@ def download_single_audio(
             'hls_prefer_native': True,
             'concurrent_fragment_downloads': 3,
             **node_cfg,
+            **get_impersonate_config(),
         }
 
         if strat['extractor_args']:

@@ -223,15 +223,15 @@ def download_single_audio(
     node_cfg = get_node_runtime_config()
 
     # Fallback strategies evaluated in order:
-    # 1. VisionOS client (no cookies or cookies): YouTube's cleanest stream, bypasses SABR 403 & reload challenges
-    # 2. VisionOS client strictly without cookies (handles cases where cookies are expired or session-locked)
-    # 3. Android + iOS mobile clients
-    # 4. Default web client with node challenge solver
+    # 1. VisionOS client with Chrome TLS impersonation (cleanest public stream, avoids expired cookie session traps)
+    # 2. Standard default client with Chrome TLS impersonation + Node.js challenge solver
+    # 3. Android client fallback
+    # 4. Attempt with account cookies if provided (for members/restricted content)
     strategies = [
-        {'extractor_args': {'youtube': {'player_client': ['visionos']}}, 'use_cookies': True},
         {'extractor_args': {'youtube': {'player_client': ['visionos']}}, 'use_cookies': False},
-        {'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}, 'use_cookies': False},
         {'extractor_args': None, 'use_cookies': False},
+        {'extractor_args': {'youtube': {'player_client': ['android']}}, 'use_cookies': False},
+        {'extractor_args': {'youtube': {'player_client': ['visionos']}}, 'use_cookies': True},
     ]
 
     last_error = ""
@@ -252,7 +252,7 @@ def download_single_audio(
                 return [], info
 
         ydl_opts: Dict[str, Any] = {
-            'format': 'bestaudio[protocol^=m3u8]/bestaudio/best',
+            'format': 'bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
             'postprocessors': postprocessors,
             'writethumbnail': embed_thumbnail,
@@ -263,8 +263,6 @@ def download_single_audio(
             'nocheckcertificate': True,
             'retries': 3,
             'fragment_retries': 3,
-            'hls_prefer_native': True,
-            'concurrent_fragment_downloads': 3,
             **node_cfg,
             **get_impersonate_config(),
         }

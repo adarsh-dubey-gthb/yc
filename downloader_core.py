@@ -1,11 +1,12 @@
 """
 Core logic for YouTube MP3 Downloader & Search.
-Cloud-ready for Streamlit Community Cloud and local environments.
+Enhanced with robust 403 Forbidden bypasses, client rotation, and cookie support.
 """
 
 import os
 import sys
 import shutil
+import time
 from typing import List, Dict, Any, Optional, Callable
 
 # Ensure UTF-8 output on Windows
@@ -63,7 +64,7 @@ def format_views(views: Optional[int]) -> str:
     return str(views)
 
 
-def search_singer_songs(singer_name: str, count: int = 5) -> List[Dict[str, Any]]:
+def search_singer_songs(singer_name: str, count: int = 5, cookie_file: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Search YouTube for top songs by the given singer/artist name.
     """
@@ -75,6 +76,8 @@ def search_singer_songs(singer_name: str, count: int = 5) -> List[Dict[str, Any]
         'geo_bypass': True,
         'nocheckcertificate': True,
     }
+    if cookie_file and os.path.isfile(cookie_file):
+        search_opts['cookiefile'] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(search_opts) as ydl:
@@ -115,7 +118,7 @@ def search_singer_songs(singer_name: str, count: int = 5) -> List[Dict[str, Any]
         return []
 
 
-def get_video_info(url: str) -> Optional[Dict[str, Any]]:
+def get_video_info(url: str, cookie_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Fetch metadata for a single YouTube URL without downloading."""
     opts = {
         'extract_flat': True,
@@ -124,6 +127,9 @@ def get_video_info(url: str) -> Optional[Dict[str, Any]]:
         'geo_bypass': True,
         'nocheckcertificate': True,
     }
+    if cookie_file and os.path.isfile(cookie_file):
+        opts['cookiefile'] = cookie_file
+
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -157,10 +163,12 @@ def download_single_audio(
     output_dir: str = "downloads",
     quality: str = "320",
     embed_thumbnail: bool = True,
+    cookie_file: Optional[str] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
     """
     Downloads audio from a YouTube URL and converts it to MP3.
+    Includes automatic fallback strategies to bypass HTTP 403 Forbidden.
     """
     os.makedirs(output_dir, exist_ok=True)
     ffmpeg_exe = get_ffmpeg_path()
@@ -180,64 +188,95 @@ def download_single_audio(
     if embed_thumbnail:
         postprocessors.append({'key': 'EmbedThumbnail'})
 
-    ydl_opts: Dict[str, Any] = {
-        'format': 'bestaudio/best',
-        'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-        'postprocessors': postprocessors,
-        'writethumbnail': embed_thumbnail,
-        'quiet': True,
-        'no_warnings': True,
-        'windowsfilenames': True,
-        'geo_bypass': True,
-        'nocheckcertificate': True,
-        'retries': 5,
-        'fragment_retries': 5,
-    }
+    # Try client configurations sequentially if 403 occurs
+    client_strategies = [
+        # Strategy 1: Default modern clients (uses visionos + android_sdkless on modern yt-dlp)
+        None,
+        # Strategy 2: Explicit visionos (bypasses SABR 403)
+        {'youtube': {'player_client': ['visionos']}},
+        # Strategy 3: Android client fallback
+        {'youtube': {'player_client': ['android', 'web']}},
+    ]
 
-    if ffmpeg_exe:
-        ydl_opts['ffmpeg_location'] = ffmpeg_exe
+    last_error = ""
 
-    if progress_callback:
-        ydl_opts['progress_hooks'] = [progress_callback]
+    for strat_idx, client_cfg in enumerate(client_strategies):
+        downloaded_files = []
 
-    downloaded_files = []
+        class FilenameCollectorPP(yt_dlp.postprocessor.PostProcessor):
+            def run(self, info):
+                filepath = info.get('filepath') or info.get('_filename')
+                if filepath:
+                    base, _ = os.path.splitext(filepath)
+                    mp3_path = f"{base}.mp3"
+                    if os.path.exists(mp3_path):
+                        downloaded_files.append(mp3_path)
+                    elif os.path.exists(filepath):
+                        downloaded_files.append(filepath)
+                return [], info
 
-    class FilenameCollectorPP(yt_dlp.postprocessor.PostProcessor):
-        def run(self, info):
-            filepath = info.get('filepath') or info.get('_filename')
-            if filepath:
-                base, _ = os.path.splitext(filepath)
-                mp3_path = f"{base}.mp3"
-                if os.path.exists(mp3_path):
-                    downloaded_files.append(mp3_path)
-                elif os.path.exists(filepath):
-                    downloaded_files.append(filepath)
-            return [], info
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.add_post_processor(FilenameCollectorPP(), when='post_process')
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'Unknown') if info else 'Unknown'
-
-            file_path = None
-            if downloaded_files:
-                file_path = downloaded_files[-1]
-            else:
-                expected = os.path.join(output_dir, f"{title}.mp3")
-                if os.path.exists(expected):
-                    file_path = expected
-
-            return {
-                'success': True,
-                'title': title,
-                'file_path': file_path,
-                'url': url,
-            }
-    except Exception as e:
-        return {
-            'success': False,
-            'title': 'Error',
-            'error': str(e),
-            'url': url,
+        ydl_opts: Dict[str, Any] = {
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
+            'postprocessors': postprocessors,
+            'writethumbnail': embed_thumbnail,
+            'quiet': True,
+            'no_warnings': True,
+            'windowsfilenames': True,
+            'geo_bypass': True,
+            'nocheckcertificate': True,
+            'retries': 3,
+            'fragment_retries': 3,
+            'http_chunk_size': 10485760,  # 10MB chunk size prevents timeout / 403 throttling
         }
+
+        if client_cfg:
+            ydl_opts['extractor_args'] = client_cfg
+
+        if cookie_file and os.path.isfile(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+        elif os.path.isfile("cookies.txt"):
+            ydl_opts['cookiefile'] = "cookies.txt"
+
+        if ffmpeg_exe:
+            ydl_opts['ffmpeg_location'] = ffmpeg_exe
+
+        if progress_callback:
+            ydl_opts['progress_hooks'] = [progress_callback]
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.add_post_processor(FilenameCollectorPP(), when='post_process')
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'Unknown') if info else 'Unknown'
+
+                file_path = None
+                if downloaded_files:
+                    file_path = downloaded_files[-1]
+                else:
+                    expected = os.path.join(output_dir, f"{title}.mp3")
+                    if os.path.exists(expected):
+                        file_path = expected
+
+                return {
+                    'success': True,
+                    'title': title,
+                    'file_path': file_path,
+                    'url': url,
+                }
+        except Exception as e:
+            last_error = str(e)
+            # If error is 403 Forbidden, loop to try the next client strategy
+            if "403" in last_error or "Forbidden" in last_error:
+                time.sleep(1)
+                continue
+            else:
+                # Other non-403 error, stop immediately
+                break
+
+    return {
+        'success': False,
+        'title': 'Error',
+        'error': last_error,
+        'url': url,
+    }

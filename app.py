@@ -2,6 +2,7 @@
 Streamlit Web Interface for YouTube MP3 Studio
 ----------------------------------------------
 Optimized for Streamlit Community Cloud & Local Deployment.
+Features automatic 403 Forbidden bypass and optional cookie support.
 """
 
 import os
@@ -123,6 +124,39 @@ with st.sidebar:
 
     embed_art = st.checkbox("Embed Album Art & Metadata", value=True, help="Embeds thumbnail and song tags into MP3")
 
+    # Optional Cookie Bypass for Cloud Servers
+    cookie_file_path = None
+    with st.expander("🍪 Cloud Cookie Bypass (Optional)", expanded=False):
+        st.caption("If YouTube limits cloud downloads with 403 Forbidden, upload or paste Netscape format cookies here.")
+        uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
+        pasted_cookie = st.text_area("Or Paste Cookies Text", height=80, placeholder="# Netscape HTTP Cookie File...")
+        
+        # Check Streamlit secrets
+        secret_cookies = None
+        try:
+            secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
+        except Exception:
+            pass
+
+        if uploaded_cookie is not None:
+            cpath = os.path.join(output_dir, "session_cookies.txt")
+            with open(cpath, "wb") as f:
+                f.write(uploaded_cookie.getvalue())
+            cookie_file_path = cpath
+            st.success("Custom cookies file active ✅")
+        elif pasted_cookie.strip():
+            cpath = os.path.join(output_dir, "session_cookies.txt")
+            with open(cpath, "w", encoding="utf-8") as f:
+                f.write(pasted_cookie.strip())
+            cookie_file_path = cpath
+            st.success("Pasted cookies active ✅")
+        elif secret_cookies:
+            cpath = os.path.join(output_dir, "session_cookies.txt")
+            with open(cpath, "w", encoding="utf-8") as f:
+                f.write(secret_cookies)
+            cookie_file_path = cpath
+            st.success("Secrets cookies active ✅")
+
     st.markdown("---")
     st.markdown("### 🖥️ Environment Status")
     ffmpeg_bin = get_ffmpeg_path()
@@ -131,7 +165,7 @@ with st.sidebar:
     else:
         st.error("**FFmpeg Not Found!**")
 
-    # Only show local desktop 'Open Folder' if running on a local desktop system
+    # Local Desktop folder opener
     is_local_desktop = (sys.platform == "win32") or ("DISPLAY" in os.environ)
     if is_local_desktop:
         if st.button("📂 Open Local Folder"):
@@ -182,7 +216,7 @@ with tab_search:
             st.warning("Please enter an artist or singer name.")
         else:
             with st.spinner(f"Scraping & searching YouTube for top {count} songs by '{singer_name}'..."):
-                results = search_singer_songs(singer_name.strip(), count=int(count))
+                results = search_singer_songs(singer_name.strip(), count=int(count), cookie_file=cookie_file_path)
                 st.session_state.search_results = results
                 st.session_state.selected_songs = {s['id']: True for s in results}
 
@@ -248,6 +282,7 @@ with tab_search:
                     output_dir=output_dir,
                     quality=quality,
                     embed_thumbnail=embed_art,
+                    cookie_file=cookie_file_path,
                 )
                 if res['success'] and res.get('file_path'):
                     downloaded_items.append((song, res))
@@ -300,7 +335,7 @@ with tab_link:
 
     if url_input.strip():
         with st.spinner("Fetching video preview..."):
-            info = get_video_info(url_input.strip())
+            info = get_video_info(url_input.strip(), cookie_file=cookie_file_path)
 
         if info:
             c1, c2 = st.columns([1.5, 4])
@@ -324,6 +359,7 @@ with tab_link:
                         output_dir=output_dir,
                         quality=quality,
                         embed_thumbnail=embed_art,
+                        cookie_file=cookie_file_path,
                     )
                 if res['success']:
                     st.success(f"Ready: **{res['title']}**!")

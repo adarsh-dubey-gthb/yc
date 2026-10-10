@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Downloaded files & temporary storage
+downloads/
+*.mp3
+*.mp4
+*.webm
+*.m4a
+*.part
+*.ytdl
+
+# Streamlit secrets & cache
+.streamlit/secrets.toml
+.system_generated/
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

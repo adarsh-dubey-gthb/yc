@@ -2,7 +2,7 @@
 Streamlit Web Interface for YouTube MP3 Studio
 ----------------------------------------------
 Optimized for Streamlit Community Cloud & Local Deployment.
-Features automatic 403 Forbidden bypass and optional cookie support.
+Features automatic 403 Forbidden bypass, friendly diagnostics, and cookie support.
 """
 
 import os
@@ -48,19 +48,6 @@ st.markdown("""
         color: #999999;
         font-size: 1rem;
         margin-bottom: 1.5rem;
-    }
-    /* Song Card */
-    .song-card {
-        background-color: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 14px;
-        margin-bottom: 12px;
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .song-card:hover {
-        border-color: rgba(255, 75, 75, 0.5);
-        transform: translateY(-2px);
     }
     .badge {
         display: inline-block;
@@ -124,14 +111,16 @@ with st.sidebar:
 
     embed_art = st.checkbox("Embed Album Art & Metadata", value=True, help="Embeds thumbnail and song tags into MP3")
 
-    # Optional Cookie Bypass for Cloud Servers
+    # Cloud Cookie Bypass
     cookie_file_path = None
-    with st.expander("🍪 Cloud Cookie Bypass (Optional)", expanded=False):
-        st.caption("If YouTube limits cloud downloads with 403 Forbidden, upload or paste Netscape format cookies here.")
+    with st.expander("🍪 Cloud Cookie Bypass (Fix 403 Forbidden)", expanded=False):
+        st.markdown(
+            "YouTube blocks media streams on cloud datacenter IPs (AWS / Streamlit Cloud). "
+            "To fix this, upload or paste your browser's **cookies.txt**."
+        )
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
-        pasted_cookie = st.text_area("Or Paste Cookies Text", height=80, placeholder="# Netscape HTTP Cookie File...")
+        pasted_cookie = st.text_area("Or Paste Cookies Text", height=90, placeholder="# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/...")
         
-        # Check Streamlit secrets
         secret_cookies = None
         try:
             secret_cookies = st.secrets.get("YOUTUBE_COOKIES", None)
@@ -215,7 +204,7 @@ with tab_search:
         if not singer_name.strip():
             st.warning("Please enter an artist or singer name.")
         else:
-            with st.spinner(f"Scraping & searching YouTube for top {count} songs by '{singer_name}'..."):
+            with st.spinner(f"Searching YouTube for top {count} songs by '{singer_name}'..."):
                 results = search_singer_songs(singer_name.strip(), count=int(count), cookie_file=cookie_file_path)
                 st.session_state.search_results = results
                 st.session_state.selected_songs = {s['id']: True for s in results}
@@ -275,6 +264,8 @@ with tab_search:
 
             downloaded_items = []
             downloaded_paths = []
+            has_403_error = False
+
             for idx, song in enumerate(selected_to_dl):
                 status_text.info(f"Processing ({idx + 1}/{len(selected_to_dl)}): **{song['title']}**...")
                 res = download_single_audio(
@@ -288,11 +279,25 @@ with tab_search:
                     downloaded_items.append((song, res))
                     downloaded_paths.append(res['file_path'])
                 else:
-                    st.error(f"Failed to process '{song['title']}': {res.get('error')}")
+                    err = res.get('error', '')
+                    if "403" in err or "Forbidden" in err:
+                        has_403_error = True
+                    st.error(f"Failed to process '{song['title']}': {err}")
 
                 progress_bar.progress((idx + 1) / len(selected_to_dl))
 
-            status_text.success(f"🎉 Successfully prepared {len(downloaded_items)} of {len(selected_to_dl)} songs!")
+            if downloaded_items:
+                status_text.success(f"🎉 Successfully prepared {len(downloaded_items)} of {len(selected_to_dl)} songs!")
+            elif has_403_error:
+                status_text.warning("YouTube blocked the download with HTTP Error 403: Forbidden (Datacenter IP Block).")
+                st.info(
+                    "💡 **Why this happened:** Streamlit Cloud is hosted on Amazon Web Services (AWS). YouTube blocks media downloads from cloud IP addresses unless you provide cookies.\n\n"
+                    "👉 **How to fix this:**\n"
+                    "1. Open **'🍪 Cloud Cookie Bypass'** in the left sidebar.\n"
+                    "2. Paste or upload your `cookies.txt` (exported using the free Chrome extension *'Get cookies.txt LOCALLY'*).\n"
+                    "3. Or run the app on your local computer (`run.bat`), where home internet connections are **never** blocked by YouTube!"
+                )
+
             st.session_state.last_downloaded_files = downloaded_paths
 
             # Batch ZIP download button if multiple files
@@ -307,23 +312,24 @@ with tab_search:
                 )
 
             # Individual audio preview and download
-            st.markdown("#### 🎧 Individual Songs (Listen & Save):")
-            for s_info, r_info in downloaded_items:
-                file_path = r_info.get('file_path')
-                if file_path and os.path.exists(file_path):
-                    col_p1, col_p2 = st.columns([3, 1])
-                    with col_p1:
-                        st.write(f"**{r_info['title']}**")
-                        st.audio(file_path)
-                    with col_p2:
-                        with open(file_path, "rb") as f:
-                            st.download_button(
-                                label="💾 Save MP3",
-                                data=f.read(),
-                                file_name=os.path.basename(file_path),
-                                mime="audio/mpeg",
-                                key=f"dl_btn_{s_info['id']}"
-                            )
+            if downloaded_items:
+                st.markdown("#### 🎧 Individual Songs (Listen & Save):")
+                for s_info, r_info in downloaded_items:
+                    file_path = r_info.get('file_path')
+                    if file_path and os.path.exists(file_path):
+                        col_p1, col_p2 = st.columns([3, 1])
+                        with col_p1:
+                            st.write(f"**{r_info['title']}**")
+                            st.audio(file_path)
+                        with col_p2:
+                            with open(file_path, "rb") as f:
+                                st.download_button(
+                                    label="💾 Save MP3",
+                                    data=f.read(),
+                                    file_name=os.path.basename(file_path),
+                                    mime="audio/mpeg",
+                                    key=f"dl_btn_{s_info['id']}"
+                                )
 
 
 # ==============================================================================
@@ -374,7 +380,10 @@ with tab_link:
                                 mime="audio/mpeg"
                             )
                 else:
-                    st.error(f"Download failed: {res.get('error')}")
+                    err = res.get('error', '')
+                    st.error(f"Download failed: {err}")
+                    if "403" in err or "Forbidden" in err:
+                        st.info("💡 **Fix:** Pass YouTube cookies in the left sidebar or run locally via `run.bat`.")
         else:
             st.error("Could not retrieve info from this URL. Please verify the link.")
 

@@ -258,7 +258,7 @@ with tab_search:
 
                 with c_thumb:
                     if s.get('thumbnail'):
-                        st.image(s['thumbnail'], use_container_width=True)
+                        st.image(s['thumbnail'])
 
                 with c_details:
                     st.markdown(f"**[{s['title']}]({s['url']})**")
@@ -362,7 +362,7 @@ with tab_link:
             c1, c2 = st.columns([1.5, 4])
             with c1:
                 if info.get('thumbnail'):
-                    st.image(info['thumbnail'], use_container_width=True)
+                    st.image(info['thumbnail'])
             with c2:
                 st.markdown(f"### {info['title']}")
                 st.markdown(

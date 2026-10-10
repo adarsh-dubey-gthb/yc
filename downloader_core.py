@@ -238,7 +238,7 @@ def download_single_audio(
                 return [], info
 
         ydl_opts: Dict[str, Any] = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[protocol^=m3u8]/bestaudio/best',
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
             'postprocessors': postprocessors,
             'writethumbnail': embed_thumbnail,
@@ -247,9 +247,10 @@ def download_single_audio(
             'windowsfilenames': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            'retries': 2,
-            'fragment_retries': 2,
-            'http_chunk_size': 10485760,  # 10MB chunk size prevents throttling
+            'retries': 3,
+            'fragment_retries': 3,
+            'hls_prefer_native': True,
+            'concurrent_fragment_downloads': 3,
             **node_cfg,
         }
 
